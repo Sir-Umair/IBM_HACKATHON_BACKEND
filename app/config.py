@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Database
-    database_url: str = f"sqlite:///{BASE_DIR}/data/financial_investigator.db"
+    database_url: str = (
+        "sqlite:////tmp/financial_investigator.db"
+        if os.environ.get("VERCEL") == "1"
+        else f"sqlite:///{BASE_DIR}/data/financial_investigator.db"
+    )
 
     # CORS
     allowed_origins: list[str] = [
@@ -26,6 +30,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
+        "*",
     ]
 
     # Google Gemini free tier — https://aistudio.google.com/app/apikey

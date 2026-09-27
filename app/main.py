@@ -25,8 +25,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: ensure DB and data directory exist."""
-    data_dir = Path(__file__).parent.parent.parent / "data"
-    data_dir.mkdir(exist_ok=True)
+    import os
+    if os.environ.get("VERCEL") == "1":
+        tmp_db = Path("/tmp/financial_investigator.db")
+        if not tmp_db.exists():
+            seed_db = Path(__file__).resolve().parent.parent / "data" / "financial_investigator.db"
+            if seed_db.exists():
+                import shutil
+                shutil.copyfile(seed_db, tmp_db)
+    else:
+        data_dir = Path(__file__).parent.parent.parent / "data"
+        data_dir.mkdir(exist_ok=True)
     init_db()
     logger.info("AI Financial Investigator started — database ready")
     yield
@@ -43,6 +52,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
