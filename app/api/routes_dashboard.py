@@ -38,6 +38,17 @@ def health_check():
     return {"status": "ok", "service": "AI Financial Investigator"}
 
 
+@router.api_route("/seed", methods=["GET", "POST"])
+def seed_database():
+    """Seed the database with deterministic demo data (900+ transactions across 3 months)."""
+    try:
+        import seed_data
+        seed_data.seed_all()
+        return {"status": "ok", "message": "Successfully seeded demo financial transactions"}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
+
+
 @router.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
     period: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
