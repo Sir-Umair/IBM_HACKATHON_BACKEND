@@ -39,14 +39,19 @@ def health_check():
 
 
 @router.api_route("/seed", methods=["GET", "POST"])
-def seed_database():
+def seed_database(db: Session = Depends(get_db)):
     """Seed the database with deterministic demo data (900+ transactions across 3 months)."""
     try:
+        from app.models.db_models import SystemSetting
         import seed_data
         seed_data.seed_all()
+        db.merge(SystemSetting(key="user_purged", value="false"))
+        db.merge(SystemSetting(key="system_initialized", value="true"))
+        db.commit()
         return {"status": "ok", "message": "Successfully seeded demo financial transactions"}
     except Exception as exc:
         return {"status": "error", "detail": str(exc)}
+
 
 
 @router.get("/dashboard", response_model=DashboardResponse)

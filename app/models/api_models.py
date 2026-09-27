@@ -53,6 +53,26 @@ class BatchDeleteRequest(BaseModel):
     transaction_ids: list[str]
 
 
+class ScenarioGenerateRequest(BaseModel):
+    scenario_type: str = "cost_spike"  # "cost_spike", "refund_wave", "margin_drop", "profitable_growth", "balanced"
+    period: str = Field(default="2026-03", pattern=r"^\d{4}-\d{2}$")
+    company_name: Optional[str] = "TechNova Dynamics"
+    record_count: Optional[int] = Field(default=20, ge=5, le=100)
+
+
+class ScenarioGenerateResponse(BaseModel):
+    status: str
+    scenario_type: str
+    period: str
+    company_name: str
+    inserted_count: int
+    total_revenue: float
+    total_expenses: float
+    net_profit: float
+    message: str
+
+
+
 # ─── Chat / Interactive AI Models ──────────────────────────────────────────
 
 

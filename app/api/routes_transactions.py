@@ -12,10 +12,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.api_models import TransactionRead, TransactionCreate, BatchDeleteRequest
-from app.models.db_models import Transaction
+from app.models.api_models import (
+    TransactionRead,
+    TransactionCreate,
+    BatchDeleteRequest,
+    ScenarioGenerateRequest,
+    ScenarioGenerateResponse,
+)
+from app.models.db_models import Transaction, SystemSetting
 from app.config import get_settings
 import uuid
+import random
+from datetime import date, timedelta
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 logger = logging.getLogger(__name__)
@@ -72,6 +80,9 @@ def create_transaction(
     )
 
     db.add(new_tx)
+    # Mark database as active (not purged) so it retains data seamlessly
+    db.merge(SystemSetting(key="user_purged", value="false"))
+    db.merge(SystemSetting(key="system_initialized", value="true"))
     db.commit()
     db.refresh(new_tx)
     logger.info("Created transaction %s: amount=%.2f type=%s", tx_id, new_tx.amount, new_tx.transaction_type)
@@ -113,7 +124,7 @@ def batch_delete_transactions(
 def purge_all_transactions(db: Session = Depends(get_db)):
     """
     PERMANENTLY PURGE ALL DATA from database (transactions, investigations, evidence).
-    Leaves the database 100% clean with zero dummy data.
+    Leaves the database 100% clean and records persistent purge flag to prevent auto-reseed on refresh.
     """
     from app.models.db_models import EvidenceRecord, Investigation, InvestigationFinding
     from sqlalchemy import text
@@ -123,6 +134,9 @@ def purge_all_transactions(db: Session = Depends(get_db)):
     f_count = db.query(InvestigationFinding).delete()
     inv_count = db.query(Investigation).delete()
 
+    # Record persistent purge state in system_settings
+    db.merge(SystemSetting(key="user_purged", value="true"))
+    db.merge(SystemSetting(key="system_initialized", value="true"))
     db.commit()
 
     try:
@@ -137,8 +151,187 @@ def purge_all_transactions(db: Session = Depends(get_db)):
         "deleted_transactions": tx_count,
         "deleted_investigations": inv_count,
         "deleted_evidence": ev_count,
-        "message": "Database completely wiped. All dummy data permanently removed.",
+        "message": "Database completely wiped. All dummy data permanently removed and purge state saved.",
     }
+
+
+@router.post("/generate-scenario", response_model=ScenarioGenerateResponse)
+def generate_scenario_transactions(
+    payload: ScenarioGenerateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Dynamically generates realistic enterprise financial transaction batches.
+    Tailored for live hackathon presentations and custom scenario testing.
+    """
+    try:
+        parts = payload.period.split("-")
+        year = int(parts[0])
+        month = int(parts[1])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid period format (expected YYYY-MM)")
+
+    company = payload.company_name or "TechNova Corp"
+    scenario = payload.scenario_type.lower()
+    count = payload.record_count or 20
+
+    tx_list: list[Transaction] = []
+    total_sales = 0.0
+    total_costs = 0.0
+
+    # Products & Categories
+    sample_products = [
+        ("AI Cloud Workstation", "Electronics", 2800.0, 1680.0, "Supplier A"),
+        ("Quantum Edge Router", "Electronics", 1250.0, 720.0, "Supplier B"),
+        ("Enterprise SaaS Platform", "Software", 3500.0, 450.0, "Supplier E"),
+        ("Secure Key Hardware", "Electronics", 95.0, 38.0, "Supplier B"),
+        ("Smart Office Display 4K", "Electronics", 680.0, 410.0, "Supplier A"),
+        ("High-Speed Fiber Switch", "Electronics", 890.0, 490.0, "Supplier B"),
+    ]
+
+    rnd = random.Random(f"{payload.period}-{scenario}-{count}")
+
+    # Generate custom transactions according to requested scenario archetype
+    for i in range(1, count + 1):
+        day = min(28, (i * 28 // count) + rnd.randint(0, 1))
+        tx_date = date(year, month, max(1, day))
+        tx_id = f"TX-DYN-{year}{month:02d}-{uuid.uuid4().hex[:6].upper()}"
+
+        if scenario == "cost_spike":
+            # 45% sales, 40% heavy supplier purchase surge, 15% expenses
+            if i % 3 == 0:
+                # Normal sale
+                prod_name, cat, price, cost_unit, supp = rnd.choice(sample_products)
+                qty = rnd.randint(1, 4)
+                amt = price * qty
+                total_sales += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="sale",
+                    category=cat, description=f"Client order fulfilled: {prod_name}",
+                    amount=amt, quantity=float(qty), unit_price=price, cost=cost_unit * qty,
+                    customer=f"Client_{rnd.randint(10, 99)}", product=prod_name, supplier=supp,
+                    status="completed", period=payload.period
+                )
+            elif i % 3 == 1:
+                # Severe supplier cost surge on Supplier A
+                amt = rnd.randint(3500, 9800)
+                total_costs += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="purchase",
+                    category="Electronics", description=f"Urgent component restock — Supplier A surcharge",
+                    amount=amt, quantity=float(rnd.randint(5, 20)), cost=amt,
+                    supplier="Supplier A", product="AI Cloud Workstation",
+                    status="completed", period=payload.period
+                )
+            else:
+                amt = rnd.randint(800, 2400)
+                total_costs += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="expense",
+                    category="Logistics", description="Emergency freight & international tariff fee",
+                    amount=amt, supplier="Supplier D", status="completed", period=payload.period
+                )
+
+        elif scenario == "refund_wave":
+            # 50% sales, 35% large refunds due to quality crisis, 15% expenses
+            if i % 3 == 0:
+                amt = rnd.randint(2200, 6800)
+                total_costs += amt  # refunds reduce net inflow / counted as outflow in summary
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="refund",
+                    category="Electronics", description="RMA Batch Defect Refund — Power unit failure",
+                    amount=amt, product="AI Cloud Workstation", customer=f"Enterprise_{rnd.randint(1, 30)}",
+                    status="completed", period=payload.period
+                )
+            elif i % 3 == 1:
+                prod_name, cat, price, cost_unit, supp = rnd.choice(sample_products)
+                qty = rnd.randint(1, 3)
+                amt = price * qty
+                total_sales += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="sale",
+                    category=cat, description=f"Standard sale: {prod_name}",
+                    amount=amt, quantity=float(qty), unit_price=price, cost=cost_unit * qty,
+                    customer=f"Customer_{rnd.randint(100, 150)}", product=prod_name, supplier=supp,
+                    status="completed", period=payload.period
+                )
+            else:
+                amt = rnd.randint(500, 1500)
+                total_costs += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="expense",
+                    category="Operations", description="Product return inspection and handling fee",
+                    amount=amt, status="completed", period=payload.period
+                )
+
+        elif scenario == "profitable_growth":
+            # 70% high-margin sales, 20% lean purchases, 10% operating costs
+            if i % 4 != 0:
+                prod_name, cat, price, cost_unit, supp = sample_products[2] if i % 2 == 0 else rnd.choice(sample_products)
+                qty = rnd.randint(2, 6)
+                amt = price * qty
+                total_sales += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="sale",
+                    category=cat, description=f"High-growth client expansion: {prod_name}",
+                    amount=amt, quantity=float(qty), unit_price=price, cost=cost_unit * qty * 0.8,
+                    customer=f"Enterprise_{company}_{rnd.randint(1, 20)}", product=prod_name, supplier=supp,
+                    status="completed", period=payload.period
+                )
+            else:
+                amt = rnd.randint(600, 1800)
+                total_costs += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="expense",
+                    category="Marketing", description="Targeted enterprise account acquisition ads",
+                    amount=amt, status="completed", period=payload.period
+                )
+
+        else:  # "balanced" or "margin_drop"
+            is_sale = (i % 2 == 0)
+            if is_sale:
+                prod_name, cat, price, cost_unit, supp = rnd.choice(sample_products)
+                qty = rnd.randint(1, 5)
+                amt = price * qty
+                total_sales += amt
+                margin_factor = 0.90 if scenario == "margin_drop" else 0.60
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="sale",
+                    category=cat, description=f"Commercial order: {prod_name}",
+                    amount=amt, quantity=float(qty), unit_price=price, cost=amt * margin_factor,
+                    customer=f"Buyer_{rnd.randint(200, 250)}", product=prod_name, supplier=supp,
+                    status="completed", period=payload.period
+                )
+            else:
+                amt = rnd.randint(900, 3200)
+                total_costs += amt
+                tx = Transaction(
+                    transaction_id=tx_id, date=tx_date, transaction_type="purchase",
+                    category="Electronics", description="Procurement batch components",
+                    amount=amt, supplier="Supplier B", status="completed", period=payload.period
+                )
+
+        tx_list.append(tx)
+
+    db.add_all(tx_list)
+    db.merge(SystemSetting(key="user_purged", value="false"))
+    db.merge(SystemSetting(key="system_initialized", value="true"))
+    db.commit()
+
+    net_profit = total_sales - total_costs
+    logger.info("Generated %d dynamic transactions for %s scenario (%s)", len(tx_list), scenario, payload.period)
+    return ScenarioGenerateResponse(
+        status="success",
+        scenario_type=scenario,
+        period=payload.period,
+        company_name=company,
+        inserted_count=len(tx_list),
+        total_revenue=round(total_sales, 2),
+        total_expenses=round(total_costs, 2),
+        net_profit=round(net_profit, 2),
+        message=f"Successfully injected {len(tx_list)} dynamic transactions into ledger for period {payload.period}.",
+    )
+
 
 
 
@@ -261,6 +454,10 @@ async def upload_transactions(
         except (ValueError, KeyError) as exc:
             errors.append(f"Row {i+1}: {exc}")
 
+    if inserted > 0:
+        db.merge(SystemSetting(key="user_purged", value="false"))
+        db.merge(SystemSetting(key="system_initialized", value="true"))
+
     db.commit()
 
     return {
@@ -268,3 +465,4 @@ async def upload_transactions(
         "errors": len(errors),
         "error_details": errors[:20],
     }
+

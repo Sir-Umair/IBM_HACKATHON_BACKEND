@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.database import SessionLocal, init_db
-from app.models.db_models import Transaction, Product, Supplier, Category
+from app.models.db_models import Transaction, Product, Supplier, Category, SystemSetting
 
 random.seed(42)
 
@@ -487,7 +487,11 @@ def seed_all():
             tx = Transaction(**tx_data)
             db.add(tx)
 
+        # Mark system settings so auto-reseed logic respects deliberate user state
+        db.merge(SystemSetting(key="system_initialized", value="true"))
+        db.merge(SystemSetting(key="user_purged", value="false"))
         db.commit()
+
 
         total = len(all_transactions)
         print(f"[OK] Seeded {len(CATEGORIES)} categories")

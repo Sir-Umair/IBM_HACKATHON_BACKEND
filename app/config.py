@@ -30,13 +30,21 @@ def _get_default_database_url() -> str:
             return env_url
         return "sqlite:////tmp/financial_investigator.db"
 
-    # 2. Direct environment override for local development
-    if os.environ.get("DATABASE_URL"):
-        return os.environ["DATABASE_URL"]
+    # 2. Environment override with canonical resolution for relative SQLite paths
+    env_url = os.environ.get("DATABASE_URL", "").strip()
+    if env_url:
+        if env_url.startswith("sqlite:///./") or env_url.startswith("sqlite:///.\\"):
+            rel_part = env_url[12:].lstrip("/\\")
+            resolved_db = (PROJECT_ROOT / rel_part).resolve()
+            resolved_db.parent.mkdir(parents=True, exist_ok=True)
+            return f"sqlite:///{resolved_db.as_posix()}"
+        return env_url
 
-    # 3. Local development
-    local_db = PROJECT_ROOT / "data" / "financial_investigator.db"
+    # 3. Canonical Local development database: ALWAYS absolute backend/data/financial_investigator.db
+    local_db = (PROJECT_ROOT / "data" / "financial_investigator.db").resolve()
+    local_db.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{local_db.as_posix()}"
+
 
 
 class Settings(BaseSettings):

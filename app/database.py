@@ -45,7 +45,7 @@ _db_ready = False
 
 
 def ensure_db_ready():
-    """Ensure database schema is created and auto-seed initial data if empty."""
+    """Ensure database schema is created and initial seed data is loaded ONLY ONCE on initial deployment."""
     global _db_ready
     if _db_ready:
         return
@@ -54,20 +54,34 @@ def ensure_db_ready():
         from app.models import db_models  # noqa: F401 - registers models
         Base.metadata.create_all(bind=engine)
 
-        # Check if database is empty; if so, populate initial seed data
         db = SessionLocal()
         try:
-            count = db.query(db_models.Transaction).count()
-            if count == 0:
-                logger.info("Database empty, initializing seed data...")
-                try:
-                    import seed_data
-                    seed_data.seed_all()
-                    logger.info("Seed data successfully populated.")
-                except Exception as s_err:
-                    logger.warning("Auto-seed non-fatal error: %s", s_err)
+            # Check if this database has already been initialized
+            init_setting = db.query(db_models.SystemSetting).filter_by(key="system_initialized").first()
+            purged_setting = db.query(db_models.SystemSetting).filter_by(key="user_purged").first()
+
+            if not init_setting:
+                # First time ever running against this database file
+                tx_count = db.query(db_models.Transaction).count()
+                if tx_count == 0 and (not purged_setting or purged_setting.value != "true"):
+                    logger.info("Brand new database detected — seeding initial baseline dataset...")
+                    try:
+                        import seed_data
+                        seed_data.seed_all()
+                        logger.info("Initial seed dataset successfully populated.")
+                    except Exception as s_err:
+                        logger.warning("Initial auto-seed non-fatal error: %s", s_err)
+
+                # Record initialization in system_settings table so it NEVER re-seeds automatically
+                db.merge(db_models.SystemSetting(key="system_initialized", value="true"))
+                if not purged_setting:
+                    db.merge(db_models.SystemSetting(key="user_purged", value="false"))
+                db.commit()
+            else:
+                logger.debug("Database already initialized; respecting persistent user data and purge states.")
         except Exception as q_err:
-            logger.warning("Error checking transaction table: %s", q_err)
+            logger.warning("Error checking system_settings or transaction table: %s", q_err)
+            db.rollback()
         finally:
             db.close()
     except Exception as exc:
@@ -87,3 +101,4 @@ def get_db():
 def init_db():
     """Create all tables and seed data if needed."""
     ensure_db_ready()
+
