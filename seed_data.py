@@ -524,7 +524,7 @@ def seed_all():
 
 if __name__ == "__main__":
     # Ensure data directory exists
-    data_dir = Path(__file__).parent.parent / "data"
+    data_dir = Path(__file__).parent / "data"
     data_dir.mkdir(exist_ok=True)
     seed_all()
     print("\nSeed complete.")
