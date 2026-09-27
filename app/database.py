@@ -47,6 +47,7 @@ def ensure_db_ready():
     global _db_ready
     if _db_ready:
         return
+    _db_ready = True
     try:
         from app.models import db_models  # noqa: F401 - registers models
         Base.metadata.create_all(bind=engine)
@@ -67,8 +68,6 @@ def ensure_db_ready():
             logger.warning("Error checking transaction table: %s", q_err)
         finally:
             db.close()
-
-        _db_ready = True
     except Exception as exc:
         logger.warning("Database ensure_db_ready warning: %s", exc)
 
