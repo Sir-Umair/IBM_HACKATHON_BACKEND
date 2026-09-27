@@ -39,8 +39,43 @@ class Base(DeclarativeBase):
     pass
 
 
+_db_ready = False
+
+
+def ensure_db_ready():
+    """Ensure database schema is created and auto-seed initial data if empty."""
+    global _db_ready
+    if _db_ready:
+        return
+    try:
+        from app.models import db_models  # noqa: F401 - registers models
+        Base.metadata.create_all(bind=engine)
+
+        # Check if database is empty; if so, populate initial seed data
+        db = SessionLocal()
+        try:
+            count = db.query(db_models.Transaction).count()
+            if count == 0:
+                logger.info("Database empty, initializing seed data...")
+                try:
+                    import seed_data
+                    seed_data.seed_all()
+                    logger.info("Seed data successfully populated.")
+                except Exception as s_err:
+                    logger.warning("Auto-seed non-fatal error: %s", s_err)
+        except Exception as q_err:
+            logger.warning("Error checking transaction table: %s", q_err)
+        finally:
+            db.close()
+
+        _db_ready = True
+    except Exception as exc:
+        logger.warning("Database ensure_db_ready warning: %s", exc)
+
+
 def get_db():
     """FastAPI dependency that provides a database session."""
+    ensure_db_ready()
     db = SessionLocal()
     try:
         yield db
@@ -49,9 +84,5 @@ def get_db():
 
 
 def init_db():
-    """Create all tables if they do not exist, wrapped in safe try/except."""
-    try:
-        from app.models import db_models  # noqa: F401 - registers models
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        logger.warning("Database init_db non-fatal warning: %s", exc)
+    """Create all tables and seed data if needed."""
+    ensure_db_ready()

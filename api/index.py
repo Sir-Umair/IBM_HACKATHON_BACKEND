@@ -11,6 +11,13 @@ for p in [str(project_root), str(current_dir)]:
         sys.path.insert(0, p)
 
 from app.main import app
+from app.database import ensure_db_ready
+
+# Ensure tables and seed data are ready on serverless cold start
+try:
+    ensure_db_ready()
+except Exception:
+    pass
 
 # Export for Vercel Serverless Function compatibility
 handler = app

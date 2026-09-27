@@ -586,5 +586,9 @@ def get_supporting_transactions(
 
 def get_available_periods(db: Session) -> list[str]:
     """Return all distinct periods in the transaction table, sorted."""
-    rows = db.query(Transaction.period).distinct().all()
-    return sorted([r[0] for r in rows])
+    try:
+        rows = db.query(Transaction.period).distinct().all()
+        return sorted([r[0] for r in rows if r[0]])
+    except Exception as exc:
+        logger.warning("Error querying available periods: %s", exc)
+        return []
