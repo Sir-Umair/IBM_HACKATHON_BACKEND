@@ -121,9 +121,10 @@ def _llm_explain(state: FinancialInvestigationState, llm_service: Any | None) ->
             "current_period": state["current_period"],
             "comparison_period": state["comparison_period"],
             "verified_metrics": state.get("current_metrics", {}),
+            "comparison_metrics": state.get("comparison_metrics", {}),
             "comparison_results": state.get("comparison_results", {}),
             "findings": state.get("contributing_factors", []),
-            "verification_status": state.get("verification_status", "unknown"),
+            "verification_status": state.get("verification_status", "verified"),
         }
         result = llm_service.generate_investigation_explanation(prompt_context)
         return result

@@ -50,7 +50,7 @@ def _route_after_verification(state: FinancialInvestigationState) -> str:
     If verification completely failed, we still run explanation
     so it can produce the failure message (it handles this case internally).
     """
-    return "explanation"
+    return "generate_explanation"
 
 
 def build_investigation_graph(db) -> StateGraph:
@@ -72,7 +72,7 @@ def build_investigation_graph(db) -> StateGraph:
     graph.add_node("verification", partial(verification_node, db=db))
 
     # Explanation node (optionally uses LLM via config)
-    graph.add_node("explanation", explanation_node)
+    graph.add_node("generate_explanation", explanation_node)
 
     # ── Edges ──────────────────────────────────────────────────────────────
     graph.set_entry_point("intent_analyzer")
@@ -87,8 +87,8 @@ def build_investigation_graph(db) -> StateGraph:
     graph.add_conditional_edges(
         "verification",
         _route_after_verification,
-        {"explanation": "explanation"},
+        {"generate_explanation": "generate_explanation"},
     )
-    graph.add_edge("explanation", END)
+    graph.add_edge("generate_explanation", END)
 
     return graph.compile()

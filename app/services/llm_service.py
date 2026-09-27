@@ -39,7 +39,7 @@ class LLMService:
     def _initialize(self) -> None:
         """Attempt to configure the Gemini client (google-genai v2 SDK)."""
         key = settings.google_api_key
-        if not key or key in ("", "your_google_api_key_here") or "AIzaSyAQ." in key:
+        if not key or key in ("", "your_google_api_key_here"):
             logger.info("Valid GOOGLE_API_KEY not provided — running in intelligent verified fallback mode")
             self._available = False
             return
@@ -143,61 +143,89 @@ JSON:"""
     ) -> str | None:
         """
         Generate a human-readable explanation of verified financial findings.
-        Gemini receives only pre-verified facts — it must not invent numbers.
+        Gemini receives pre-verified ledger facts and metrics to answer the user inquiry.
         """
         question          = context.get("question", "")
         current_period    = context.get("current_period", "")
         comparison_period = context.get("comparison_period", "")
         findings          = context.get("findings", [])
         comparison        = context.get("comparison_results", {})
-        verification      = context.get("verification_status", "unknown")
+        verified_metrics  = context.get("verified_metrics", {})
+        comparison_metrics= context.get("comparison_metrics", {})
+        verification      = context.get("verification_status", "verified")
 
-        if not findings:
-            return None
+        # Extract figures
+        curr_tx_count = verified_metrics.get("transaction_count", 0)
+        curr_rev = verified_metrics.get("revenue", 0.0)
+        curr_exp = verified_metrics.get("expenses", verified_metrics.get("total_costs", 0.0))
+        curr_prof = verified_metrics.get("profit", verified_metrics.get("net_profit", 0.0))
+        curr_margin = verified_metrics.get("gross_margin_pct", 0.0)
 
-        # Build a facts block for the prompt
+        comp_tx_count = comparison_metrics.get("transaction_count", 0)
+        comp_rev = comparison_metrics.get("revenue", 0.0)
+        comp_exp = comparison_metrics.get("expenses", comparison_metrics.get("total_costs", 0.0))
+        comp_prof = comparison_metrics.get("profit", comparison_metrics.get("net_profit", 0.0))
+        comp_margin = comparison_metrics.get("gross_margin_pct", 0.0)
+
+        # Build comparison summary
         profit_cmp = comparison.get("net_profit", {})
         if isinstance(profit_cmp, dict) and profit_cmp:
             profit_line = (
-                f"Net profit changed from ${profit_cmp.get('comparison_value', 0):,.2f} "
+                f"Net profit shifted from ${profit_cmp.get('comparison_value', 0):,.2f} "
                 f"to ${profit_cmp.get('current_value', 0):,.2f} "
-                f"(change: ${profit_cmp.get('change', 0):,.2f}, "
+                f"(delta: ${profit_cmp.get('change', 0):,.2f}, "
                 f"{profit_cmp.get('change_pct', 0):.1f}%)"
             )
         else:
-            profit_line = "Profit data unavailable."
+            profit_line = f"Current Net Profit: ${curr_prof:,.2f} | Prior Net Profit: ${comp_prof:,.2f}"
 
         findings_block = "\n".join(
             f"  {i+1}. {f.get('reason', f.get('entity', 'Unknown'))}"
-            for i, f in enumerate(findings[:6])
-        )
+            for i, f in enumerate(findings[:8])
+        ) if findings else "No adverse anomalies or unexpected spikes detected in this ledger interval."
 
         evidence_ids: list[str] = []
         for f in findings[:6]:
             evidence_ids.extend(f.get("supporting_tx_ids", [])[:3])
-        evidence_line = ", ".join(evidence_ids[:10]) if evidence_ids else "see evidence tab"
+        evidence_line = ", ".join(evidence_ids[:10]) if evidence_ids else "N/A"
 
-        prompt = f"""You are an expert senior financial investigator for IBM BOB Hackathon. Explain the following verified findings to a business executive or audit committee.
-Provide an executive, analytical briefing that highlights root causes and evidence.
+        prompt = f"""You are an elite Senior Financial Forensic Investigator and CFO Advisory Agent for IBM BOB Hackathon.
+Answer the user's specific financial inquiry using ONLY the verified ledger metrics and facts provided below.
 
-QUESTION: {question}
+USER QUESTION: {question}
 PERIOD: {current_period} vs {comparison_period}
-VERIFICATION STATUS: {verification}
+AUDIT VERIFICATION: {verification}
 
-VERIFIED FINANCIAL FACTS:
+VERIFIED LEDGER METRICS ({current_period}):
+- Transaction Count: {curr_tx_count}
+- Total Revenue: ${curr_rev:,.2f}
+- Total Expenses & Operating Costs: ${curr_exp:,.2f}
+- Net Profit: ${curr_prof:,.2f}
+- Gross Margin: {curr_margin:.1f}%
+
+PRIOR PERIOD BENCHMARK ({comparison_period}):
+- Transaction Count: {comp_tx_count}
+- Total Revenue: ${comp_rev:,.2f}
+- Total Expenses & Operating Costs: ${comp_exp:,.2f}
+- Net Profit: ${comp_prof:,.2f}
+- Gross Margin: {comp_margin:.1f}%
+
+PROFIT & VARIANCE ATTRIBUTION:
 {profit_line}
 
-CONTRIBUTING FACTORS (Verified from ledger):
+KEY CONTRIBUTING FACTORS & DETECTED PATTERNS:
 {findings_block}
 
-SUPPORTING EVIDENCE IDs: {evidence_line}
+SUPPORTING EVIDENCE TRANSACTION IDs: {evidence_line}
 
-RULES:
-1. Ground every claim on the verified facts above.
-2. Structure clearly with Executive Summary, Variance Attribution, and Evidence Reference.
-3. Be articulate, professional, and precise.
+INSTRUCTIONS:
+1. Directly answer the user's question ("{question}") in the very first sentence.
+2. Ground all numbers strictly on the verified facts above.
+3. If the user asks about the number of transactions, report the exact transaction count for {current_period} and {comparison_period}.
+4. Provide structured, executive-grade analysis with clear headings and bullet points.
+5. Do NOT use placeholder text or generic templates.
 
-Explanation:"""
+Executive Report:"""
 
         return self._generate(prompt)
 
