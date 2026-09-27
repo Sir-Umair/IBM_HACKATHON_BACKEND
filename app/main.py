@@ -3,11 +3,13 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+import os
+import shutil
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
+from app.config import get_settings, is_serverless
 from app.database import init_db
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_transactions import router as transactions_router
@@ -24,20 +26,34 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: ensure DB and data directory exist."""
-    import os
-    if os.environ.get("VERCEL") == "1":
-        tmp_db = Path("/tmp/financial_investigator.db")
-        if not tmp_db.exists():
-            seed_db = Path(__file__).resolve().parent.parent / "data" / "financial_investigator.db"
-            if seed_db.exists():
-                import shutil
-                shutil.copyfile(seed_db, tmp_db)
-    else:
-        data_dir = Path(__file__).parent.parent.parent / "data"
-        data_dir.mkdir(exist_ok=True)
-    init_db()
-    logger.info("AI Financial Investigator started — database ready")
+    """Startup: ensure DB and data directory exist with zero cold-start crashes."""
+    try:
+        if is_serverless():
+            tmp_db = Path("/tmp/financial_investigator.db")
+            if not tmp_db.exists():
+                # Search possible locations for seed database
+                candidates = [
+                    Path(__file__).resolve().parent.parent / "data" / "financial_investigator.db",
+                    Path("/var/task/data/financial_investigator.db"),
+                    Path("/var/task/backend/data/financial_investigator.db"),
+                ]
+                for cand in candidates:
+                    if cand.exists():
+                        try:
+                            shutil.copyfile(cand, tmp_db)
+                            logger.info("Copied seed database to %s", tmp_db)
+                            break
+                        except Exception as exc:
+                            logger.warning("Could not copy seed DB: %s", exc)
+        else:
+            local_data = Path(__file__).resolve().parent.parent / "data"
+            local_data.mkdir(parents=True, exist_ok=True)
+
+        init_db()
+        logger.info("AI Financial Investigator started — database ready")
+    except Exception as exc:
+        logger.warning("Lifespan startup non-fatal warning: %s", exc)
+
     yield
     logger.info("Application shutting down")
 
@@ -68,7 +84,9 @@ app.include_router(investigate_router)
 @app.get("/")
 def root():
     return {
-        "name": "AI Financial Investigator",
+        "service": "AI Financial Investigator",
         "version": "1.0.0",
+        "status": "online",
+        "environment": "serverless" if is_serverless() else "standard",
         "docs": "/docs",
     }

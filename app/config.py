@@ -4,10 +4,35 @@ from pathlib import Path
 import os
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+def is_serverless() -> bool:
+    """Detect if running in Vercel, AWS Lambda, or a serverless container."""
+    return bool(
+        os.environ.get("VERCEL")
+        or os.environ.get("VERCEL_ENV")
+        or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+        or os.environ.get("LAMBDA_TASK_ROOT")
+    )
+
+
+# Project root directory (backend folder)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Look for .env in the backend directory regardless of cwd
-_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+_ENV_FILE = PROJECT_ROOT / ".env"
+
+
+def _get_default_database_url() -> str:
+    # 1. Direct environment override
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+
+    # 2. Serverless (Vercel / Lambda): writable /tmp storage to prevent read-only filesystem crash
+    if is_serverless():
+        return "sqlite:////tmp/financial_investigator.db"
+
+    # 3. Local development
+    local_db = PROJECT_ROOT / "data" / "financial_investigator.db"
+    return f"sqlite:///{local_db.as_posix()}"
 
 
 class Settings(BaseSettings):
@@ -17,11 +42,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Database
-    database_url: str = (
-        "sqlite:////tmp/financial_investigator.db"
-        if os.environ.get("VERCEL") == "1"
-        else f"sqlite:///{BASE_DIR}/data/financial_investigator.db"
-    )
+    database_url: str = _get_default_database_url()
 
     # CORS
     allowed_origins: list[str] = [
