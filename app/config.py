@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from pathlib import Path
@@ -22,13 +23,16 @@ _ENV_FILE = PROJECT_ROOT / ".env"
 
 
 def _get_default_database_url() -> str:
-    # 1. Direct environment override
+    # 1. Serverless: filesystem outside /tmp is strictly read-only
+    if is_serverless():
+        env_url = os.environ.get("DATABASE_URL", "")
+        if env_url.startswith("postgresql") or env_url.startswith("mysql"):
+            return env_url
+        return "sqlite:////tmp/financial_investigator.db"
+
+    # 2. Direct environment override for local development
     if os.environ.get("DATABASE_URL"):
         return os.environ["DATABASE_URL"]
-
-    # 2. Serverless (Vercel / Lambda): writable /tmp storage to prevent read-only filesystem crash
-    if is_serverless():
-        return "sqlite:////tmp/financial_investigator.db"
 
     # 3. Local development
     local_db = PROJECT_ROOT / "data" / "financial_investigator.db"
@@ -43,6 +47,12 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = _get_default_database_url()
+
+    def model_post_init(self, __context: Any) -> None:
+        """In serverless mode, enforce writable /tmp directory to avoid read-only filesystem crash."""
+        if is_serverless():
+            if not (self.database_url.startswith("postgresql") or self.database_url.startswith("mysql")):
+                self.database_url = "sqlite:////tmp/financial_investigator.db"
 
     # CORS
     allowed_origins: list[str] = [

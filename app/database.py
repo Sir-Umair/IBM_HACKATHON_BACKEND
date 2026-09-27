@@ -19,6 +19,8 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
             # In serverless/read-only or tmpfs, WAL can cause locked database or shm errors
             if is_serverless():
                 cursor.execute("PRAGMA journal_mode=MEMORY")
+                cursor.execute("PRAGMA temp_store=MEMORY")
+                cursor.execute("PRAGMA synchronous=OFF")
             else:
                 cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
